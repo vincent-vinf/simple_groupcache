@@ -8,18 +8,46 @@ import (
 	"testing"
 )
 
-func TestGroupCache(t *testing.T) {
-	m := make(map[string]string)
-	m["1"] = "1"
-	m["2"] = "2"
-	m["3"] = "2"
+var data = map[string]string{
+	"a": "aa",
+	"b": "bb",
+	"1": "11111111111111111111111111111111111",
+}
 
-	NewGroup("test", 100, GetterFunc(func(ctx context.Context, key string) ([]byte, error) {
-		if val, ok := m[key]; ok {
+func TestGroupCache(t *testing.T) {
+	g := NewGroup("test", 100, GetterFunc(func(ctx context.Context, key string) ([]byte, error) {
+		if val, ok := data[key]; ok {
 			return []byte(val), nil
 		}
 		return nil, errors.New("not find")
 	}))
-	p := NewHTTPPool("http://127.0.0.1:8001", "")
-	log.Fatal(http.ListenAndServe("127.0.0.1:8001", p))
+	prefix := "http://"
+	self := "127.0.0.1:8001"
+	peers := []string{
+		"http://127.0.0.1:8001",
+		"http://127.0.0.1:8002",
+	}
+	p := NewHTTPPool(prefix+self, "")
+	g.SetPeerPicker(p)
+	p.Set(peers...)
+	log.Fatal(http.ListenAndServe(self, p))
+}
+
+func TestGroupCache2(t *testing.T) {
+	g := NewGroup("test", 100, GetterFunc(func(ctx context.Context, key string) ([]byte, error) {
+		if val, ok := data[key]; ok {
+			return []byte(val), nil
+		}
+		return nil, errors.New("not find")
+	}))
+	prefix := "http://"
+	self := "127.0.0.1:8002"
+	peers := []string{
+		"http://127.0.0.1:8001",
+		"http://127.0.0.1:8002",
+	}
+	p := NewHTTPPool(prefix+self, "")
+	g.SetPeerPicker(p)
+	p.Set(peers...)
+	log.Fatal(http.ListenAndServe(self, p))
 }

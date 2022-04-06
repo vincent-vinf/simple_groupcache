@@ -2,7 +2,6 @@ package simple_groupcache
 
 import (
 	"context"
-	"errors"
 	"log"
 	"testing"
 )
@@ -17,7 +16,7 @@ func TestGroup(t *testing.T) {
 		if val, ok := m[key]; ok {
 			return []byte(val), nil
 		}
-		return nil, errors.New("not find")
+		return nil, nil
 	}))
 	log.Println(g.Name())
 	ctx := context.Background()

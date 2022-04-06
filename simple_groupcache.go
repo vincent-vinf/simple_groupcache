@@ -2,6 +2,7 @@ package simple_groupcache
 
 import (
 	"context"
+	"log"
 	"simple_groupcache/lru"
 	"sync"
 )
@@ -23,8 +24,11 @@ func (f GetterFunc) Get(ctx context.Context, key string) ([]byte, error) {
 
 // A Group is a cache namespace and associated data loaded spread over
 type Group struct {
-	name      string
-	getter    Getter
+	name   string
+	getter Getter
+	// 节点选择接口
+	peers PeerPicker
+
 	mainCache *cache
 	// groupcache还提供了热点数据多点缓存的功能
 	// hotCache *cache
@@ -67,11 +71,22 @@ func (g *Group) Get(ctx context.Context, key string) ([]byte, error) {
 
 // 缓存未命中 从其它地方获取数据
 func (g *Group) load(ctx context.Context, key string) (ByteView, error) {
-	return g.getLocally(ctx, key)
+	log.Println("load:" + key)
+	p, ok := g.peers.PickPeer(key)
+	if !ok {
+		bv, err := g.getLocally(ctx, key)
+		if err != nil {
+			return ByteView{}, err
+		}
+		g.populateCache(key, bv)
+		return bv, err
+	}
+	return g.getPeer(ctx, key, p)
 }
 
 // 直接从数据源获取数据
 func (g *Group) getLocally(ctx context.Context, key string) (ByteView, error) {
+	log.Println("getLocally")
 	val, err := g.getter.Get(ctx, key)
 	if err != nil {
 		return ByteView{}, err
@@ -82,8 +97,21 @@ func (g *Group) getLocally(ctx context.Context, key string) (ByteView, error) {
 }
 
 // 从对等点处获取数据
-func (g *Group) getPeer(ctx context.Context, key string) (ByteView, error) {
-	return ByteView{}, nil
+func (g *Group) getPeer(ctx context.Context, key string, getter PeerGetter) (ByteView, error) {
+	log.Println("getPeer")
+	bytes, err := getter.Get(ctx, g.Name(), key)
+	if err != nil {
+		return ByteView{}, err
+	}
+	return ByteView{data: bytes}, nil
+}
+
+// SetPeerPicker 将对等点选择接口注入到group中
+func (g *Group) SetPeerPicker(peers PeerPicker) {
+	if g.peers != nil {
+		panic("RegisterPeerPicker called more than once")
+	}
+	g.peers = peers
 }
 
 // 缓存数据
