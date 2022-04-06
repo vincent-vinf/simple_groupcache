@@ -3,11 +3,13 @@ package simple_groupcache
 import (
 	"context"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"simple_groupcache/consistenthash"
+	"simple_groupcache/pb"
 	"strings"
 	"sync"
 )
@@ -58,15 +60,19 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	log.Println("key:" + key)
 	data, err := group.Get(ctx, key)
+	log.Println("data:" + string(data))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	//w.Header().Set("Content-Type", "application/x-protobuf")
-	// 设置http请求标头为8位字节流
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Write(data)
+	w.Header().Set("Content-Type", "application/x-pb")
+	body, err := proto.Marshal(&pb.GetResponse{Value: data})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+	w.Write(body)
 }
 
 func (p *HTTPPool) PickPeer(key string) (PeerGetter, bool) {
@@ -96,28 +102,31 @@ type httpGetter struct {
 	baseUrl string
 }
 
-func (g *httpGetter) Get(ctx context.Context, group string, key string) ([]byte, error) {
+func (g *httpGetter) Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResponse) error {
 	u := fmt.Sprintf(
 		"%v%v/%v",
 		g.baseUrl,
-		url.QueryEscape(group),
-		url.QueryEscape(key),
+		url.QueryEscape(in.GetGroup()),
+		url.QueryEscape(in.GetKey()),
 	)
 	res, err := http.Get(u)
 	log.Println(u)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned: %v", res.Status)
+		return fmt.Errorf("server returned: %v", res.Status)
 	}
 
 	bytes, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading response body: %v", err)
+		return fmt.Errorf("reading response body: %v", err)
 	}
-
-	return bytes, nil
+	err = proto.Unmarshal(bytes, out)
+	if err != nil {
+		return fmt.Errorf("decoding response body: %v", err)
+	}
+	return nil
 }

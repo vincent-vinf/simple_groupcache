@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"simple_groupcache/lru"
+	"simple_groupcache/pb"
+	"simple_groupcache/singleflight"
 	"sync"
 )
 
@@ -27,7 +29,8 @@ type Group struct {
 	name   string
 	getter Getter
 	// 节点选择接口
-	peers PeerPicker
+	peers  PeerPicker
+	loader *singleflight.Group
 
 	mainCache *cache
 	// groupcache还提供了热点数据多点缓存的功能
@@ -47,6 +50,7 @@ func NewGroup(name string, maxEntries int, getter Getter) *Group {
 		name:      name,
 		getter:    getter,
 		mainCache: newCache(maxEntries),
+		loader:    &singleflight.Group{},
 	}
 	groupMap[name] = g
 	return g
@@ -71,22 +75,27 @@ func (g *Group) Get(ctx context.Context, key string) ([]byte, error) {
 
 // 缓存未命中 从其它地方获取数据
 func (g *Group) load(ctx context.Context, key string) (ByteView, error) {
-	log.Println("load:" + key)
-	p, ok := g.peers.PickPeer(key)
-	if !ok {
-		bv, err := g.getLocally(ctx, key)
-		if err != nil {
-			return ByteView{}, err
+	val, err := g.loader.Do(key, func() (interface{}, error) {
+		p, ok := g.peers.PickPeer(key)
+		if !ok {
+			bv, err := g.getLocally(ctx, key)
+			if err != nil {
+				return ByteView{}, err
+			}
+			g.populateCache(key, bv)
+			return bv, err
 		}
-		g.populateCache(key, bv)
-		return bv, err
+		return g.getPeer(ctx, key, p)
+	})
+	if err != nil {
+		return ByteView{}, err
 	}
-	return g.getPeer(ctx, key, p)
+	return val.(ByteView), nil
 }
 
 // 直接从数据源获取数据
 func (g *Group) getLocally(ctx context.Context, key string) (ByteView, error) {
-	log.Println("getLocally")
+	log.Println("getLocally:" + key)
 	val, err := g.getter.Get(ctx, key)
 	if err != nil {
 		return ByteView{}, err
@@ -98,12 +107,17 @@ func (g *Group) getLocally(ctx context.Context, key string) (ByteView, error) {
 
 // 从对等点处获取数据
 func (g *Group) getPeer(ctx context.Context, key string, getter PeerGetter) (ByteView, error) {
-	log.Println("getPeer")
-	bytes, err := getter.Get(ctx, g.Name(), key)
+	log.Println("getPeer:" + g.name + ":" + key)
+	req := &pb.GetRequest{
+		Group: &g.name,
+		Key:   &key,
+	}
+	res := &pb.GetResponse{}
+	err := getter.Get(ctx, req, res)
 	if err != nil {
 		return ByteView{}, err
 	}
-	return ByteView{data: bytes}, nil
+	return ByteView{data: res.Value}, nil
 }
 
 // SetPeerPicker 将对等点选择接口注入到group中

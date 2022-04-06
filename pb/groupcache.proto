@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package protobuf;
+option go_package = "../pb";
+
+message GetRequest {
+  required string group = 1;
+  required string key = 2;
+}
+
+message GetResponse {
+  optional bytes value = 1;
+}
+

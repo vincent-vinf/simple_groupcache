@@ -1,9 +1,12 @@
 package simple_groupcache
 
-import "context"
+import (
+	"context"
+	"simple_groupcache/pb"
+)
 
 type PeerGetter interface {
-	Get(cxt context.Context, group string, key string) ([]byte, error)
+	Get(ctx context.Context, in *pb.GetRequest, out *pb.GetResponse) error
 }
 
 type PeerPicker interface {
